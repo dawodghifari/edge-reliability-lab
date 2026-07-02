@@ -1,0 +1,9 @@
+# Ruff config for the edge-cache service. Kept intentionally practical for a lab:
+# catch real bugs (pyflakes F), style errors/warnings (E/W), and common gotchas
+# (bugbear B) — without churny import-reordering, since the tests deliberately set
+# environment variables *before* importing the app.
+line-length = 120
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "B"]

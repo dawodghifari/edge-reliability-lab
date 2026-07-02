@@ -1,0 +1,19 @@
+# Local Kubernetes cluster definition for `kind` (Kubernetes IN Docker).
+#
+#   kind create cluster --name edge-lab --config k8s/kind-config.yaml
+#
+# One control-plane + two workers so the scheduler has somewhere to spread the
+# 2 edge-cache replicas — closer to a real multi-node setup than a single node.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: edge-lab
+nodes:
+  - role: control-plane
+    # Expose the ingress-style port in case we later front the service with NodePort.
+    # Not required for port-forward, but harmless and handy.
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+  - role: worker
+  - role: worker

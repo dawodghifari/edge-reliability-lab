@@ -1,0 +1,26 @@
+# Tells the Prometheus operator to scrape the edge-cache service's /metrics.
+#
+# Matches the Service by its `app: edge-cache` label and scrapes the named port
+# "http" (defined on the Service). The `release: kube-prom-stack` label is belt-
+# and-braces: it makes this ServiceMonitor selectable even on a default chart
+# install — though monitoring-values.yaml also relaxes the selector.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: edge-cache
+  namespace: edge-lab
+  labels:
+    app: edge-cache
+    release: kube-prom-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - edge-lab
+  selector:
+    matchLabels:
+      app: edge-cache
+  endpoints:
+    - port: http          # the named Service port
+      path: /metrics
+      interval: 10s
+      scrapeTimeout: 5s

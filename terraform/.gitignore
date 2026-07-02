@@ -1,0 +1,12 @@
+# Local Terraform state and provider cache — never commit these.
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# tfvars can hold local overrides / secrets.
+*.tfvars
+*.tfvars.json
+
+# Keep .terraform.lock.hcl committed — it pins provider versions for reproducibility.

@@ -1,0 +1,26 @@
+# NodePort service used ONLY for load testing, so traffic goes through kube-proxy
+# (kernel networking, handles thousands of req/s and load-balances across all
+# edge-cache pods) instead of a fragile `kubectl port-forward` tunnel.
+#
+# kind maps host port 30080 -> node port 30080 (see k8s/kind-config.yaml), so k6 can
+# hit http://localhost:30080 directly with no port-forward.
+#
+# NOTE: its metadata label is `app: edge-cache-lb` (not `edge-cache`) on purpose, so
+# the Phase 2 ServiceMonitor (which selects `app: edge-cache`) does NOT also scrape
+# this service and double-count metrics. The pod SELECTOR is still `app: edge-cache`.
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-cache-lb
+  namespace: edge-lab
+  labels:
+    app: edge-cache-lb
+spec:
+  type: NodePort
+  selector:
+    app: edge-cache
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      nodePort: 30080

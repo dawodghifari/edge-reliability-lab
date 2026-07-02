@@ -1,0 +1,61 @@
+# Redis cache layer, in-cluster. A single replica is fine for a lab — it's the
+# component we'll deliberately kill later to cause a cold-cache incident.
+#
+# Reachable from the app at:  redis://redis.edge-lab.svc.cluster.local:6379/0
+# (within the same namespace, just `redis:6379` works.)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: edge-lab
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+              name: redis
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: edge-lab
+  labels:
+    app: redis
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+      name: redis
+  type: ClusterIP

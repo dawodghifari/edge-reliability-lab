@@ -1,0 +1,81 @@
+# The edge-cache service running on Kubernetes: 2 replicas behind a ClusterIP.
+#
+# The image is built locally and loaded into kind (see scripts/build-and-load.sh),
+# so imagePullPolicy is IfNotPresent — Kubernetes must NOT try to pull edge-cache:dev
+# from a registry (it doesn't exist there).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-cache
+  namespace: edge-lab
+  labels:
+    app: edge-cache
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: edge-cache
+  template:
+    metadata:
+      labels:
+        app: edge-cache
+    spec:
+      containers:
+        - name: edge-cache
+          image: edge-cache:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+            - name: CHAOS_ENABLED
+              value: "true"
+            # Strict cache mode: depend on the real in-cluster Redis. No silent
+            # in-memory fallback, so a Redis outage is visible (Phase 4).
+            - name: CACHE_MEMORY_FALLBACK
+              value: "false"
+            - name: ORIGIN_LATENCY_SECONDS
+              value: "0.15"
+            - name: SEGMENT_TTL_SECONDS
+              value: "60"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-cache
+  namespace: edge-lab
+  labels:
+    app: edge-cache
+spec:
+  selector:
+    app: edge-cache
+  ports:
+    - name: http          # named port — the Phase 2 ServiceMonitor scrapes "http"
+      port: 8000
+      targetPort: http
+  type: ClusterIP

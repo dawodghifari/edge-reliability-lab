@@ -1,0 +1,73 @@
+# Helm values for the kube-prometheus-stack chart (Prometheus + Grafana +
+# Alertmanager + node-exporter + kube-state-metrics).
+#
+#   helm install kube-prom-stack prometheus-community/kube-prometheus-stack \
+#     -n monitoring --create-namespace -f k8s/monitoring-values.yaml
+#
+# Tuned for a local kind cluster on a laptop: smaller footprint + a couple of
+# settings that avoid classic "why isn't my app being scraped / dashboard missing"
+# gotchas.
+
+# --- Prometheus ---
+prometheus:
+  prometheusSpec:
+    # GOTCHA FIX: by default the chart only selects ServiceMonitors that carry the
+    # Helm release label. Setting these to false makes Prometheus pick up ANY
+    # ServiceMonitor / PrometheusRule in the cluster — so our edge-cache
+    # ServiceMonitor and Phase 3 SLO rules are scraped without label gymnastics.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+
+    # Keep storage/retention modest for a laptop lab.
+    retention: 2d
+    resources:
+      requests:
+        cpu: 150m
+        memory: 400Mi
+      limits:
+        memory: 900Mi
+
+# --- Grafana ---
+grafana:
+  # Lab-only credentials. Fine for local; never do this in a real cluster.
+  adminUser: admin
+  adminPassword: admin
+  # The sidecar watches ConfigMaps labelled grafana_dashboard=1 and auto-imports
+  # them — this is how our edge-cache dashboard gets provisioned (IaC, not a manual
+  # UI import). searchNamespace=ALL so the ConfigMap can live in any namespace.
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+# --- Alertmanager (used in Phase 3) ---
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+
+# --- Trim bundled exporters we don't need for this lab ---
+# Keep node-exporter + kube-state-metrics (needed for saturation / golden signals),
+# but drop the control-plane scrapers that are noisy/irrelevant on kind.
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false

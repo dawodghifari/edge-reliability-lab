@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Env / secrets
+.env
+*.env
+kubeconfig*
+*.kubeconfig
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+
+# Internal planning — kept local, not published
+PLAN.md
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

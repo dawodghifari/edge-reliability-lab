@@ -1,0 +1,33 @@
+# Local dev stack: the edge-cache service + Redis. This is the Phase 0 target —
+# run it before moving to Kubernetes.
+#
+#   docker compose up --build
+#   curl localhost:8000/segment/abc   # first time: X-Cache: MISS
+#   curl localhost:8000/segment/abc   # again:      X-Cache: HIT
+#   curl localhost:8000/metrics
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  edge-cache:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    image: edge-cache:dev
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CHAOS_ENABLED: "true"
+      SEGMENT_TTL_SECONDS: "60"
+      ORIGIN_LATENCY_SECONDS: "0.15"
+    depends_on:
+      redis:
+        condition: service_healthy

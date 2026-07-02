@@ -1,0 +1,7 @@
+# Dedicated namespace for the lab so everything is easy to find and tear down.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: edge-lab
+  labels:
+    app.kubernetes.io/part-of: edge-reliability-lab

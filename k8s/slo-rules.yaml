@@ -1,0 +1,183 @@
+# Phase 3 — SLOs as code: recording rules for the SLIs plus multi-window
+# burn-rate alerts, a service-down alert, a cache-hit-ratio-collapse alert, and a
+# Redis-down alert. The Prometheus operator picks this up automatically
+# (monitoring-values.yaml relaxes the rule selector; the release label is belt-and-braces).
+#
+# SLOs (see docs/SLO.md):
+#   Availability : 99.9% of /segment requests non-5xx  → error budget 0.1% (0.001)
+#   Latency      : 99% of /segment requests < 200ms    → error budget 1%   (0.01)
+#
+# Burn-rate thresholds (Google SRE workbook, page-level):
+#   Fast page : burn 14.4x, windows 1h AND 5m
+#   Slow page : burn 6x,    windows 6h AND 30m
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: edge-cache-slo
+  namespace: monitoring
+  labels:
+    release: kube-prom-stack
+    app: edge-cache
+spec:
+  groups:
+    # ---------------------------------------------------------------------------
+    - name: edge-cache.sli.recording
+      interval: 30s
+      rules:
+        # --- Availability SLI: fraction of /segment requests that are 5xx ("bad") ---
+        - record: sli:edge_cache_availability:bad_ratio_rate5m
+          expr: |
+            (sum(rate(http_requests_total{job="edge-cache",route="/segment",status=~"5.."}[5m])) or vector(0))
+            / sum(rate(http_requests_total{job="edge-cache",route="/segment"}[5m]))
+        - record: sli:edge_cache_availability:bad_ratio_rate30m
+          expr: |
+            (sum(rate(http_requests_total{job="edge-cache",route="/segment",status=~"5.."}[30m])) or vector(0))
+            / sum(rate(http_requests_total{job="edge-cache",route="/segment"}[30m]))
+        - record: sli:edge_cache_availability:bad_ratio_rate1h
+          expr: |
+            (sum(rate(http_requests_total{job="edge-cache",route="/segment",status=~"5.."}[1h])) or vector(0))
+            / sum(rate(http_requests_total{job="edge-cache",route="/segment"}[1h]))
+        - record: sli:edge_cache_availability:bad_ratio_rate6h
+          expr: |
+            (sum(rate(http_requests_total{job="edge-cache",route="/segment",status=~"5.."}[6h])) or vector(0))
+            / sum(rate(http_requests_total{job="edge-cache",route="/segment"}[6h]))
+
+        # --- Latency SLI: fraction of /segment requests SLOWER than 200ms ("bad") ---
+        # good = requests in the le=0.2s bucket; bad = 1 - good/total.
+        - record: sli:edge_cache_latency:bad_ratio_rate5m
+          expr: |
+            1 - (
+              sum(rate(request_latency_seconds_bucket{job="edge-cache",route="/segment",le="0.2"}[5m]))
+              / sum(rate(request_latency_seconds_count{job="edge-cache",route="/segment"}[5m]))
+            )
+        - record: sli:edge_cache_latency:bad_ratio_rate30m
+          expr: |
+            1 - (
+              sum(rate(request_latency_seconds_bucket{job="edge-cache",route="/segment",le="0.2"}[30m]))
+              / sum(rate(request_latency_seconds_count{job="edge-cache",route="/segment"}[30m]))
+            )
+        - record: sli:edge_cache_latency:bad_ratio_rate1h
+          expr: |
+            1 - (
+              sum(rate(request_latency_seconds_bucket{job="edge-cache",route="/segment",le="0.2"}[1h]))
+              / sum(rate(request_latency_seconds_count{job="edge-cache",route="/segment"}[1h]))
+            )
+        - record: sli:edge_cache_latency:bad_ratio_rate6h
+          expr: |
+            1 - (
+              sum(rate(request_latency_seconds_bucket{job="edge-cache",route="/segment",le="0.2"}[6h]))
+              / sum(rate(request_latency_seconds_count{job="edge-cache",route="/segment"}[6h]))
+            )
+
+    # ---------------------------------------------------------------------------
+    - name: edge-cache.slo.alerts
+      rules:
+        # --- Availability burn-rate (error budget 0.001) ---
+        - alert: EdgeCacheAvailabilityFastBurn
+          expr: |
+            sli:edge_cache_availability:bad_ratio_rate1h > (14.4 * 0.001)
+            and
+            sli:edge_cache_availability:bad_ratio_rate5m > (14.4 * 0.001)
+          for: 2m
+          labels:
+            severity: critical
+            slo: availability
+            burn: fast
+          annotations:
+            summary: "Edge-cache availability error budget burning FAST (14.4x)"
+            description: "5xx ratio on /segment is >1.44% over both 1h and 5m — at this rate the 30-day 99.9% budget is exhausted in ~2 days. Page."
+            runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-availability-burn.md"
+        - alert: EdgeCacheAvailabilitySlowBurn
+          expr: |
+            sli:edge_cache_availability:bad_ratio_rate6h > (6 * 0.001)
+            and
+            sli:edge_cache_availability:bad_ratio_rate30m > (6 * 0.001)
+          for: 15m
+          labels:
+            severity: warning
+            slo: availability
+            burn: slow
+          annotations:
+            summary: "Edge-cache availability error budget burning slowly (6x)"
+            description: "5xx ratio on /segment is >0.6% over both 6h and 30m — sustained budget burn. Investigate."
+            runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-availability-burn.md"
+
+        # --- Latency burn-rate (error budget 0.01) ---
+        - alert: EdgeCacheLatencyFastBurn
+          expr: |
+            sli:edge_cache_latency:bad_ratio_rate1h > (14.4 * 0.01)
+            and
+            sli:edge_cache_latency:bad_ratio_rate5m > (14.4 * 0.01)
+          for: 2m
+          labels:
+            severity: critical
+            slo: latency
+            burn: fast
+          annotations:
+            summary: "Edge-cache latency error budget burning FAST (14.4x)"
+            description: ">14.4% of /segment requests are slower than 200ms over both 1h and 5m. Page."
+            runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-latency-burn.md"
+        - alert: EdgeCacheLatencySlowBurn
+          expr: |
+            sli:edge_cache_latency:bad_ratio_rate6h > (6 * 0.01)
+            and
+            sli:edge_cache_latency:bad_ratio_rate30m > (6 * 0.01)
+          for: 15m
+          labels:
+            severity: warning
+            slo: latency
+            burn: slow
+          annotations:
+            summary: "Edge-cache latency error budget burning slowly (6x)"
+            description: ">6% of /segment requests are slower than 200ms over both 6h and 30m. Investigate."
+            runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-latency-burn.md"
+
+    # ---------------------------------------------------------------------------
+    - name: edge-cache.availability.alerts
+      rules:
+        # --- Hard down: no edge-cache targets are up (e.g. scaled to 0 or crashed) ---
+        - alert: EdgeCacheServiceDown
+          expr: (sum(up{job="edge-cache"}) or vector(0)) == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Edge-cache is DOWN (no healthy replicas)"
+            description: "No edge-cache Prometheus targets are up. The service is unreachable."
+            runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-service-down.md"
+
+        # --- Cache hit ratio collapsed while under real traffic ---
+        # This is a FAST operational alert ("the cache is on fire right now"), so it
+        # uses a short 2m averaging window + for:2m — deliberately different from the
+        # slow multi-window burn-rate SLO alerts above (which trade speed for precision).
+        # A 5m window here was too sluggish: it took ~5 min just to cross 50% after a
+        # Redis outage (the window stays full of pre-fault hits), so on a ~9 min incident
+        # the for:5m hold never completed and the alert got stuck PENDING. A 2m window
+        # crosses ~2 min in and fires ~4 min in, with comfortable margin. See the
+        # 2026-07-01 post-mortem re-run notes.
+        - alert: EdgeCacheHitRatioCollapsed
+          expr: |
+            (
+              sum(rate(cache_hits_total{job="edge-cache"}[2m]))
+              / clamp_min(sum(rate(cache_hits_total{job="edge-cache"}[2m])) + sum(rate(cache_misses_total{job="edge-cache"}[2m])), 1)
+            ) < 0.5
+            and
+            (sum(rate(cache_hits_total{job="edge-cache"}[2m])) + sum(rate(cache_misses_total{job="edge-cache"}[2m]))) > 1
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Edge-cache hit ratio collapsed (<50%)"
+            description: "Cache hit ratio has dropped below 50% under traffic (2m window) — origin load and latency will spike. Likely a cold/flushed cache or Redis problem."
+            runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-hit-ratio-collapsed.md"
+
+        # --- Redis dependency unreachable ---
+        - alert: EdgeCacheRedisDown
+          expr: min(redis_up{job="edge-cache"}) == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Edge-cache cannot reach Redis"
+            description: "redis_up is 0 — the cache layer is unreachable, so every request falls through to the origin."
+            runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-redis-down.md"
