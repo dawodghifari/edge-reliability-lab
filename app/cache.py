@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from . import metrics
+from . import tracing
 
 try:  # redis is optional at import time so tests can run without it installed
     import redis as _redis
@@ -322,20 +323,48 @@ class Cache:
         key = self._key(segment_id)
 
         if not bypass:
-            cached = self._read(key)
+            # Child span: how long the cache lookup took, and whether we even tried.
+            # During an outage with the breaker OPEN this span is ~0ms and carries
+            # redis.skipped=true — that is the breaker fix, visible in the waterfall.
+            with tracing.start_span("cache.lookup") as span:
+                breaker_state = self.breaker_state()
+                span.set_attribute("cache.backend", self.backend_name)
+                span.set_attribute("redis.circuit_state", breaker_state)
+                span.set_attribute("redis.skipped", breaker_state == _CB_OPEN)
+                cached = self._read(key)
+                span.set_attribute("cache.hit", cached is not None)
             if cached is not None:
                 return SegmentResult(data=cached, cache_hit=True, origin_fetch_seconds=0.0)
 
-        # Miss (or bypass): fetch from the simulated origin.
-        start = time.perf_counter()
-        time.sleep(ORIGIN_LATENCY_SECONDS)
-        data = _generate_segment_bytes(segment_id)
-        elapsed = time.perf_counter() - start
+        # Miss (or bypass): fetch from the simulated origin. This is the expensive
+        # leg — on the waterfall it is the wide bar that explains the p99.
+        with tracing.start_span("origin.fetch") as span:
+            span.set_attribute("segment.id", segment_id)
+            span.set_attribute("cache.bypass", bypass)
+            start = time.perf_counter()
+            time.sleep(ORIGIN_LATENCY_SECONDS)
+            data = _generate_segment_bytes(segment_id)
+            elapsed = time.perf_counter() - start
+            span.set_attribute("origin.fetch_seconds", round(elapsed, 4))
+            span.set_attribute("segment.bytes", len(data))
 
         if not bypass:
-            self._write(key, data, SEGMENT_TTL_SECONDS)
+            with tracing.start_span("cache.write") as span:
+                span.set_attribute("redis.circuit_state", self.breaker_state())
+                self._write(key, data, SEGMENT_TTL_SECONDS)
 
         return SegmentResult(data=data, cache_hit=False, origin_fetch_seconds=elapsed)
+
+    def breaker_state(self) -> str:
+        """Current Redis circuit-breaker state: closed | half_open | open.
+
+        Exposed so request handlers and trace spans can record *why* a request
+        behaved the way it did. Already published to the redis_circuit_state gauge;
+        this is the same fact in a form traces can carry.
+        """
+        if self._client is None or not self._cb_enabled:
+            return _CB_CLOSED
+        return self._breaker.state
 
     def flush(self) -> None:
         """Clear the cache — used by chaos to force a cold cache."""

@@ -21,6 +21,7 @@ fire on a short outage. Both are diagnosed, fixed, and written up here.
 - [How a request flows](#how-a-request-flows)
 - [The circuit breaker](#the-circuit-breaker)
 - [Observability](#observability)
+- [Tracing](#tracing)
 - [SLOs, error budgets, and alerting](#slos-error-budgets-and-alerting)
 - [The incident](#the-incident)
 - [Capacity planning](#capacity-planning)
@@ -145,6 +146,61 @@ errors, saturation) plus cache hit ratio, origin latency, Redis health, and the 
 breaker state.
 
 ![Dashboard during recovery — Redis UP, breaker CLOSED, hit ratio climbing back](docs/postmortems/images/04-wholepanel-up-recovery.png)
+
+## Tracing
+
+Metrics say *that* the service is slow. Traces say *where the time went* inside one
+request. The service exports OpenTelemetry spans over OTLP to **Grafana Tempo**, so a
+`/segment` request breaks down into a waterfall:
+
+```
+GET /segment/abc123                          812ms
+├── cache.lookup                              11ms   cache.hit=false  redis.circuit_state=closed
+└── origin.fetch                             798ms   origin.fetch_seconds=0.798
+```
+
+![Cache hit — cache.lookup with a Redis GET inside it, and no origin fetch at all](docs/postmortems/images/05-trace-cache-hit.png)
+
+A hit finishes in ~1ms: `cache.lookup` 469µs wrapping a Redis `GET` of 389µs, and no
+`origin.fetch` span whatsoever.
+
+During the Redis outage the shape changes in a way that proves the circuit breaker is
+working — by what's *missing*:
+
+![Redis outage — breaker open, no Redis child spans, origin.fetch dominates](docs/postmortems/images/06-trace-redis-outage-breaker-open.png)
+
+| | Healthy miss | During outage |
+|---|---|---|
+| `cache.lookup` | 142µs → **Redis `GET` 114µs** | 27.5µs → **no child** |
+| `cache.write` | 303µs → **Redis `SET` 277µs** | 25.88µs → **no child** |
+| Spans | 8 | 6 |
+
+The Redis spans are gone entirely. The breaker is open, so the app isn't calling a dead
+dependency at all — it fails to origin in 27µs instead of blocking a worker thread. The
+fix from the post-mortem, visible as an absence in the waterfall.
+
+### Exemplars
+
+Latency histograms carry **exemplars** — a trace id attached to a single observation —
+so a spike on the p99 panel links straight to the request behind it.
+
+![p99 latency with exemplar diamonds, climbing as the cache stops absorbing traffic](docs/postmortems/images/07-exemplars-on-p99.png)
+
+Clicking a diamond opens that exact request:
+
+![The trace reached by clicking an exemplar — the full miss path](docs/postmortems/images/08-exemplar-jump-to-trace.png)
+
+The p99 shape above is the incident itself: flat at ~2ms while the cache absorbs traffic,
+climbing to ~198ms once every request pays the origin fetch. The latency SLO is 99% under
+200ms — the service sat right on the line through a total cache outage without crossing
+it, which is what the breaker buys.
+
+Tracing is opt-in and inert without `OTEL_EXPORTER_OTLP_ENDPOINT` — tests and a bare
+clone run untouched. It samples at 10% in-cluster, because exporting every span at the
+drill's ~128 rps would skew the p99 the drill exists to measure.
+
+Full detail, including the three-part exemplar gotcha and the honest limitations:
+**[docs/TRACING.md](docs/TRACING.md)**.
 
 ## SLOs, error budgets, and alerting
 
@@ -299,6 +355,7 @@ and pull request: lint with ruff, run the tests with pytest, and build the Docke
 | `k8s/` | Kubernetes manifests (app, Redis, ServiceMonitor, SLO rules) + kind and monitoring config |
 | `dashboards/` | Grafana dashboard JSON |
 | `docs/SLO.md` | SLOs, error budgets, and the alerting rationale |
+| `docs/TRACING.md` | Tracing architecture, sampling, exemplars, and limitations |
 | `docs/runbooks/` | One runbook per alert |
 | `docs/postmortems/` | The incident post-mortem, timeline, and screenshots |
 | `docs/capacity/` | Capacity model, forecast script, and chart |

@@ -16,6 +16,18 @@ services:
       timeout: 3s
       retries: 5
 
+  # Trace backend for local work, so you can see waterfalls without a cluster.
+  # Tempo has no UI of its own — query it from Grafana, or just confirm spans are
+  # arriving in its logs. In the cluster this is installed via Helm instead.
+  tempo:
+    image: grafana/tempo:2.5.0
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./k8s/tempo-local.yaml:/etc/tempo/tempo.yaml:ro
+    ports:
+      - "4318:4318"   # OTLP/HTTP receiver
+      - "3200:3200"   # Tempo query API
+
   edge-cache:
     build:
       context: ./app
@@ -28,6 +40,13 @@ services:
       CHAOS_ENABLED: "true"
       SEGMENT_TTL_SECONDS: "60"
       ORIGIN_LATENCY_SECONDS: "0.15"
+      # Tracing on locally. Sample every request — there's no load here to skew,
+      # and you want to see the waterfall for the request you just made.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+      TRACE_SAMPLE_RATIO: "1.0"
+      DEPLOYMENT_ENV: compose
     depends_on:
       redis:
         condition: service_healthy
+      tempo:
+        condition: service_started

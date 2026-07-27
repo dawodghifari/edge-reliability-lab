@@ -1,0 +1,49 @@
+# Helm values for grafana/tempo — the trace backend (third observability pillar).
+#
+#   helm install tempo grafana/tempo -n monitoring -f k8s/tempo-values.yaml
+#
+# Tempo stores traces the app exports over OTLP/HTTP and serves them to Grafana,
+# which already renders our Prometheus metrics. One pane of glass: a latency spike
+# on a dashboard links straight to the trace that caused it (see exemplars in
+# k8s/monitoring-values.yaml).
+#
+# This is the single-binary Tempo chart with local storage — right for a laptop
+# kind cluster. A real deployment would use object storage (S3/GCS) and run the
+# ingester/querier/compactor as separate scalable components.
+
+tempo:
+  # Accept OTLP over HTTP on 4318. The app posts to $endpoint/v1/traces.
+  # gRPC (4317) is left off — one protocol is enough here and fewer open ports is
+  # fewer things to debug.
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+
+  # Traces older than this are dropped. A lab only needs enough history to review
+  # an incident drill; 24h keeps disk use trivial.
+  retention: 24h
+
+  # metricsGenerator would derive RED metrics from spans. Deliberately OFF: we
+  # already produce those metrics directly in the app, and having two sources of
+  # truth for the same number is how dashboards start disagreeing with each other.
+  metricsGenerator:
+    enabled: false
+
+# Local emptyDir-backed storage. Traces do not survive a pod restart — acceptable
+# for a lab, and stated plainly so nobody mistakes this for a durable setup.
+persistence:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+
+# Single replica — no HA. Tempo going down loses traces but must never affect the
+# edge-cache service itself; the app's exporter batches on a background thread and
+# drops spans rather than blocking a request.
+replicas: 1

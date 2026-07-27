@@ -1,0 +1,12 @@
+2026-07-27 18:57:06 AEST  INCIDENT START — baseline healthy, load running.
+2026-07-27 18:57:06 AEST  FAULT INJECTED — scaling deploy/redis to 0 (cache layer down).
+2026-07-27 18:57:07 AEST  Holding fault for 540s.
+2026-07-27 18:57:07 AEST  >>> WATCH & SCREENSHOT Grafana now: 'Redis up' -> DOWN, cache hit ratio -> 0,
+2026-07-27 18:57:07 AEST  >>> latency p99 climbing, origin-fetch latency up.
+2026-07-27 18:57:07 AEST  >>> Expected alerts: EdgeCacheRedisDown (~1m), EdgeCacheHitRatioCollapsed (~5m).
+2026-07-27 19:06:07 AEST  MITIGATION — scaling deploy/redis back to 1.
+2026-07-27 19:06:13 AEST  REDIS READY — cache is cold and will re-warm as traffic repopulates it.
+2026-07-27 19:06:13 AEST  Observing recovery for 150s.
+2026-07-27 19:06:13 AEST  >>> WATCH & SCREENSHOT recovery: 'Redis up' -> UP, hit ratio climbing back,
+2026-07-27 19:06:13 AEST  >>> latency returning to normal, alerts clearing.
+2026-07-27 19:08:43 AEST  INCIDENT END — service recovered.

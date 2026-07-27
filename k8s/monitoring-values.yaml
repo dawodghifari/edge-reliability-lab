@@ -20,6 +20,13 @@ prometheus:
     podMonitorSelectorNilUsesHelmValues: false
     probeSelectorNilUsesHelmValues: false
 
+    # Exemplars are the metric→trace link: a trace id attached to a histogram
+    # observation, so a latency spike in Grafana becomes a clickable jump to the
+    # exact slow request. Prometheus DISCARDS exemplars unless this feature is on,
+    # and it fails silently — the dashboard just never shows the little diamonds.
+    enableFeatures:
+      - exemplar-storage
+
     # Keep storage/retention modest for a laptop lab.
     retention: 2d
     resources:
@@ -43,6 +50,47 @@ grafana:
       label: grafana_dashboard
       labelValue: "1"
       searchNamespace: ALL
+    datasources:
+      # We declare BOTH datasources ourselves below, because the chart's built-in
+      # Prometheus datasource gives no way to attach exemplarTraceIdDestinations —
+      # and without that, exemplars are stored but never linked to anything.
+      defaultDatasourceEnabled: false
+
+  additionalDataSources:
+    - name: Prometheus
+      uid: prometheus
+      type: prometheus
+      access: proxy
+      isDefault: true
+      # Service name is <release>-kube-prome-prometheus; release is kube-prom-stack
+      # (see scripts/install-monitoring.sh). Rename the release and this must change.
+      url: http://kube-prom-stack-kube-prome-prometheus.monitoring:9090/
+      jsonData:
+        httpMethod: POST
+        # THE LINK: when a series carries an exemplar with a trace_id label, render
+        # it as a jump into the Tempo datasource below.
+        exemplarTraceIdDestinations:
+          - name: trace_id
+            datasourceUid: tempo
+            urlDisplayLabel: "View trace"
+
+    - name: Tempo
+      uid: tempo
+      type: tempo
+      access: proxy
+      url: http://tempo.monitoring:3200
+      jsonData:
+        # The reverse direction: from a trace, pivot to the logs/metrics around it.
+        tracesToMetrics:
+          datasourceUid: prometheus
+          tags:
+            - key: service.name
+              value: service
+        serviceMap:
+          datasourceUid: prometheus
+        nodeGraph:
+          enabled: true
+
   resources:
     requests:
       cpu: 50m

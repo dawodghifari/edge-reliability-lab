@@ -3,6 +3,12 @@ uvicorn[standard]==0.30.1
 redis==5.0.7
 prometheus-client==0.20.0
 pydantic==2.7.4
+# --- tracing (OpenTelemetry -> Tempo) ---
+# Inert unless OTEL_EXPORTER_OTLP_ENDPOINT is set; see app/tracing.py.
+opentelemetry-sdk==1.44.0
+opentelemetry-exporter-otlp-proto-http==1.44.0
+opentelemetry-instrumentation-fastapi==0.65b0
+opentelemetry-instrumentation-redis==0.65b0
 # test-only
 pytest==8.2.2
 httpx==0.27.0

@@ -89,6 +89,55 @@ stalls." The planning conclusion is sharp — surviving a Redis outage *at peak*
 more replicas than serving normal traffic does, which reframes how many replicas "enough"
 really is.
 
+## Adding the third pillar: tracing
+
+Metrics and alerts answered *is the service breaching its SLO* and *how often do we miss
+cache*. Neither answered *why was this particular request slow*. So I added distributed
+tracing — OpenTelemetry spans exported to **Grafana Tempo**, rendered next to the existing
+Prometheus data.
+
+A `/segment` request now decomposes into `cache.lookup` → `origin.fetch` → `cache.write`,
+with the Redis call auto-instrumented inside the lookup. The payoff showed up immediately
+when I re-ran the outage drill: during the fault, the Redis spans **disappear entirely**.
+`cache.lookup` drops from 142µs-with-a-Redis-GET to 27µs-with-nothing, and the trace falls
+from eight spans to six. The circuit breaker isn't calling a dependency it knows is dead —
+which I'd previously only been able to infer from a gauge, and can now simply see.
+
+### Bug #3: exemplars pointing at traces that didn't exist
+
+Exemplars are the metric-to-trace link — a trace id attached to a histogram observation,
+so a latency spike becomes a click-through to the request behind it. I wired them up, the
+diamonds appeared on the p99 panel, I clicked one, and Tempo said `failed to get trace
+with id ... Status: Not Found`.
+
+The cause: an **unsampled span still has a valid trace id**. It just never gets exported.
+My helper returned the id unconditionally, so at a 10% sample ratio roughly nine in ten
+exemplars linked to traces Tempo had never received. The fix is one condition —
+`ctx.trace_flags.sampled` — plus two regression tests.
+
+What made this worth writing down is that nothing *looked* broken. Grafana rendered the
+diamond, the click navigated, the id was well-formed. It only failed at the destination,
+and only once sampling was on: at 100% sampling every link resolves and the bug is
+invisible. It needed a production-shaped configuration to surface at all.
+
+It's the same species of error as the Grafana axis that made 128 rps look like zero — the
+tooling stated something confidently and wrongly. A dead link is worse than no link,
+because it teaches you to distrust the instruments during the incident when you need them.
+
+### Verification run
+
+Re-running the drill with tracing enabled: **896,585 requests over 17 minutes at ~879
+rps, zero failures**, 92% cache hit ratio, median 3.9ms, p95 154ms. The percentile spread
+maps cleanly onto the two request shapes the traces show — the median is the cache-hit
+path, p95 is the miss path paying the ~150ms origin fetch.
+
+Worth stating plainly: at 20 VUs and a 21.4ms mean iteration, the load generator caps
+around 930 rps, so this run was client-bound, not service-bound. It demonstrates that
+tracing didn't destabilise anything under sustained load and that the breaker still
+delivered zero errors through a full cache outage. It does not measure capacity, and it
+doesn't isolate tracing overhead — that needs a fixed-load A/B at sample ratios 0 and 0.1,
+which I haven't run yet.
+
 ## Making it reproducible
 
 Finally, I made the whole thing rebuildable: **Terraform** manages the monitoring stack
@@ -106,6 +155,11 @@ it — so there's no drift between what I tested and what deploys.
   version's live Redis ping in `/healthz` turned a blip into a correlated outage — fixed
   by making the probe report the last-observed health instead).
 - When a graph and a counter disagree, believe the counter.
+- Metrics tell you the service is slow; only traces tell you which leg of the request
+  consumed the time.
+- Test observability under its production configuration. Sampling, batching and retention
+  are exactly where the silent failures live — the exemplar bug was invisible until the
+  sample ratio dropped below 1.0.
 
 The code, dashboards, runbooks, the full post-mortem, and the capacity model are all in
 the repo. It's a lab, but every failure in it was real, found the hard way, and fixed.

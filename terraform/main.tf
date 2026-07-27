@@ -31,6 +31,30 @@ resource "helm_release" "kube_prom_stack" {
   timeout = 900
 }
 
+# 1b) Tempo — the trace backend. Installed into the same monitoring namespace so
+#     Grafana can reach it at http://tempo.monitoring:3200 (the datasource URL
+#     hard-coded in monitoring-values.yaml). depends_on the main chart so the
+#     namespace exists and Grafana is up to pick the datasource up.
+#
+#     Tempo is deliberately a SEPARATE release, not a subchart: traces have a very
+#     different storage and retention profile from metrics, and keeping them apart
+#     means the trace backend can be restarted, resized, or removed entirely
+#     without touching Prometheus. Losing traces should never cost you metrics.
+resource "helm_release" "tempo" {
+  name             = "tempo"
+  repository       = "https://grafana.github.io/helm-charts"
+  chart            = "tempo"
+  version          = var.tempo_chart_version
+  namespace        = var.monitoring_namespace
+  create_namespace = true
+
+  values = [file("${local.repo_root}/k8s/tempo-values.yaml")]
+
+  timeout = 300
+
+  depends_on = [helm_release.kube_prom_stack]
+}
+
 # 2) App namespace — created before any namespaced app resource.
 resource "kubectl_manifest" "namespace" {
   yaml_body = file("${local.repo_root}/k8s/namespace.yaml")
@@ -51,6 +75,10 @@ resource "kubectl_manifest" "app" {
   depends_on = [
     kubectl_manifest.namespace,
     helm_release.kube_prom_stack,
+    # The app's OTLP endpoint points at Tempo. It starts fine without Tempo (the
+    # exporter just drops spans), but ordering it this way means a fresh apply
+    # comes up with tracing already working rather than after the first restart.
+    helm_release.tempo,
   ]
 }
 

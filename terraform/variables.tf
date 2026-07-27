@@ -37,3 +37,14 @@ variable "chart_version" {
   type        = string
   default     = null
 }
+
+variable "tempo_chart_version" {
+  description = <<-EOT
+    grafana/tempo chart version (trace backend). null = latest.
+    Same reproducibility caveat as chart_version — pin it once you have a
+    version that works:
+      helm list -n monitoring -o json | jq '.[] | select(.name=="tempo") | .chart'
+  EOT
+  type        = string
+  default     = null
+}

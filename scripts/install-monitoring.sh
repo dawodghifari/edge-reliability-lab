@@ -24,6 +24,16 @@ helm upgrade --install "$RELEASE" prometheus-community/kube-prometheus-stack \
   -f "$REPO_ROOT/k8s/monitoring-values.yaml" \
   --wait --timeout 10m
 
+echo "→ Adding the grafana Helm repo (for Tempo) ..."
+helm repo add grafana https://grafana.github.io/helm-charts >/dev/null 2>&1 || true
+helm repo update grafana >/dev/null
+
+echo "→ Installing/upgrading Tempo (trace backend) ..."
+helm upgrade --install tempo grafana/tempo \
+  --namespace "$MON_NS" --create-namespace \
+  -f "$REPO_ROOT/k8s/tempo-values.yaml" \
+  --wait --timeout 5m
+
 echo "→ Applying the edge-cache ServiceMonitor ..."
 kubectl apply -f "$REPO_ROOT/k8s/servicemonitor.yaml"
 

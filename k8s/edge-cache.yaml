@@ -40,6 +40,21 @@ spec:
               value: "0.15"
             - name: SEGMENT_TTL_SECONDS
               value: "60"
+            # --- Tracing → Tempo ---
+            # Unset this and the app runs exactly as before: tracing is opt-in and
+            # inert without an endpoint (see app/tracing.py).
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://tempo.monitoring:4318"
+            - name: OTEL_SERVICE_NAME
+              value: "edge-cache"
+            # Sample 10%. The incident drill sustains ~128 rps across 2 replicas;
+            # tracing every request would add export overhead to the request path
+            # and skew the very p99 the drill is measuring. Raise to "1.0" when
+            # you want a complete picture and throughput doesn't matter.
+            - name: TRACE_SAMPLE_RATIO
+              value: "0.1"
+            - name: DEPLOYMENT_ENV
+              value: "kind-lab"
           resources:
             requests:
               cpu: "100m"

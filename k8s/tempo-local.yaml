@@ -1,0 +1,35 @@
+# Tempo config for the docker-compose stack only. In Kubernetes the Helm chart
+# generates its own config from k8s/tempo-values.yaml — this file exists so local
+# `docker compose up` gives you traces without needing a cluster.
+#
+# Single-binary, everything in local storage, no auth. Lab only.
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  # Flush quickly so a trace you just generated is queryable in seconds rather
+  # than minutes. Wasteful in production; exactly right when you're iterating.
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 24h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+
+usage_report:
+  reporting_enabled: false

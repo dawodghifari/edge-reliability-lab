@@ -18,14 +18,24 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from fastapi import FastAPI, Response, HTTPException
+from fastapi import FastAPI, Response, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client.openmetrics.exposition import (
+    generate_latest as generate_latest_openmetrics,
+    CONTENT_TYPE_LATEST as OPENMETRICS_CONTENT_TYPE,
+)
 
 from . import metrics
 from . import chaos
+from . import tracing
 from .cache import Cache
+
+try:  # optional: absent when the OTel extras aren't installed
+    from opentelemetry import trace as trace_api
+except ImportError:  # pragma: no cover
+    trace_api = None
 
 app = FastAPI(
     title="Edge Reliability Lab — edge-cache",
@@ -33,13 +43,34 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Tracing is opt-in: a no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set. Must run
+# before the first request so FastAPI auto-instrumentation can attach middleware.
+tracing.setup_tracing(app)
+
 # One cache instance per process. Reads REDIS_URL from the environment.
 cache = Cache()
 
 
 def _observe(route: str, status: int, started: float) -> None:
-    """Record latency + request count for a finished request."""
-    metrics.request_latency_seconds.labels(route=route).observe(time.perf_counter() - started)
+    """Record latency + request count for a finished request.
+
+    Where a trace is in flight, its id rides along as a Prometheus *exemplar* — the
+    link that lets you click a latency spike in Grafana and land on the exact slow
+    request behind it. Exemplars only survive OpenMetrics exposition, so /metrics
+    negotiates that content type below.
+    """
+    elapsed = time.perf_counter() - started
+    trace_id = tracing.current_trace_id()
+    latency = metrics.request_latency_seconds.labels(route=route)
+    if trace_id:
+        try:
+            latency.observe(elapsed, exemplar={"trace_id": trace_id})
+        except (TypeError, ValueError):
+            # Older prometheus_client, or a label set that rejects exemplars —
+            # record the measurement anyway. Losing a trace link must never lose data.
+            latency.observe(elapsed)
+    else:
+        latency.observe(elapsed)
     metrics.http_requests_total.labels(route=route, status=str(status)).inc()
 
 
@@ -57,8 +88,20 @@ async def healthz() -> JSONResponse:
 
 
 @app.get("/metrics")
-async def get_metrics() -> Response:
-    """Prometheus exposition endpoint. ASYNC so scrapes aren't starved under load."""
+async def get_metrics(request: Request) -> Response:
+    """Prometheus exposition endpoint. ASYNC so scrapes aren't starved under load.
+
+    Serves OpenMetrics when the scraper asks for it (Prometheus sends
+    `Accept: application/openmetrics-text` when exemplar storage is enabled).
+    Exemplars — our metric-to-trace links — exist ONLY in that format; the classic
+    text format silently drops them, which looks exactly like tracing being broken.
+    """
+    accept = request.headers.get("accept", "")
+    if "application/openmetrics-text" in accept:
+        return Response(
+            generate_latest_openmetrics(metrics.registry),
+            media_type=OPENMETRICS_CONTENT_TYPE,
+        )
     return Response(generate_latest(metrics.registry), media_type=CONTENT_TYPE_LATEST)
 
 
@@ -77,6 +120,15 @@ def get_segment(segment_id: str) -> Response:
             return JSONResponse({"error": "injected fault"}, status_code=500)
 
         result = cache.get_segment(segment_id, bypass=chaos.state.cache_bypass)
+
+        # Tag the request span with the outcome so you can filter Tempo for the
+        # interesting traces — e.g. every miss during the outage window.
+        span = trace_api.get_current_span() if trace_api else None
+        if span is not None:
+            span.set_attribute("segment.id", segment_id)
+            span.set_attribute("cache.hit", result.cache_hit)
+            span.set_attribute("cache.bypass", bool(chaos.state.cache_bypass))
+            span.set_attribute("redis.circuit_state", cache.breaker_state())
 
         if result.cache_hit:
             metrics.cache_hits_total.inc()
