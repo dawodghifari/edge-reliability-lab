@@ -9,10 +9,11 @@ to practise site reliability engineering on something concrete — to define wha
 "reliable" means for a cache, measure it, then deliberately break the service under load
 and work the incident through to a post-mortem and fixes.
 
-The parts I learned the most from weren't the happy path. They were two failures I hit
+The parts I learned the most from weren't the happy path. They were three failures I hit
 while trying to break the service *cleanly*: a synchronous request handler that stalled
-on a dead Redis instead of failing fast, and an operational alert that was too slow to
-fire on a short outage. Both are diagnosed, fixed, and written up here.
+on a dead Redis instead of failing fast, an operational alert that was too slow to fire
+on a short outage, and a set of metric exemplars that linked to traces which had never
+been exported. All three are diagnosed, fixed, and written up here.
 
 ## Contents
 
@@ -21,7 +22,7 @@ fire on a short outage. Both are diagnosed, fixed, and written up here.
 - [How a request flows](#how-a-request-flows)
 - [The circuit breaker](#the-circuit-breaker)
 - [Observability](#observability)
-- [Tracing](#tracing)
+- [Tracing](#tracing) — including [the exemplars that pointed nowhere](#the-exemplars-pointed-at-traces-that-did-not-exist)
 - [SLOs, error budgets, and alerting](#slos-error-budgets-and-alerting)
 - [The incident](#the-incident)
 - [Capacity planning](#capacity-planning)
@@ -199,8 +200,42 @@ Tracing is opt-in and inert without `OTEL_EXPORTER_OTLP_ENDPOINT` — tests and 
 clone run untouched. It samples at 10% in-cluster, because exporting every span at the
 drill's ~128 rps would skew the p99 the drill exists to measure.
 
-Full detail, including the three-part exemplar gotcha and the honest limitations:
+### The exemplars pointed at traces that did not exist
+
+Turning sampling on introduced a bug that nothing in the system reported.
+
+An unsampled span still carries a valid trace id. It simply never gets exported. Attach
+that id as an exemplar and Grafana renders a perfectly ordinary diamond; click it, and
+Tempo answers `failed to get trace with id ... Status: Not Found`. At a 10% sample ratio
+roughly nine in ten diamonds behaved this way. The panel looked richer than one that
+worked.
+
+`current_trace_id()` now checks `ctx.trace_flags.sampled` before returning anything, with
+two regression tests. There are fewer diamonds on the panel and every one of them
+resolves.
+
+Two things make this worth writing down. The bug is invisible at 100% sampling, so it
+could only appear in a production-shaped configuration — observability has to be tested
+the way it will actually run. And a link that looks right and goes nowhere is worse than
+no link, because it teaches an on-call engineer to distrust the tooling during the
+incident when they need it most.
+
+Full detail, including the three-part exemplar setup and the honest limitations:
 **[docs/TRACING.md](docs/TRACING.md)**.
+
+### Verification run
+
+Re-running the drill with tracing on: **896,585 requests over 17 minutes at ~879 rps,
+zero failures**, 92% cache hit ratio, median 3.9 ms, p95 154 ms. The percentile spread
+maps onto the two request shapes the traces show — the median is the cache-hit path, p95
+is the miss path paying the ~150 ms origin fetch.
+
+Stated plainly: at 20 VUs and a 21.4 ms mean iteration the load generator caps near
+930 rps, so this run was client-bound, not service-bound. It shows that tracing did not
+destabilise anything under sustained load and that the breaker still delivered zero
+errors through a full cache outage. It does not measure capacity, and it does not isolate
+tracing overhead. That needs a fixed-load A/B at sample ratios 0 and 0.1, which I have
+not run.
 
 ## SLOs, error budgets, and alerting
 
