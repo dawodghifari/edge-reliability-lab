@@ -5,9 +5,10 @@ of helpers. Toggling it via POST /admin/chaos lets us inject artificial latency,
 random error rate, and a cache bypass at runtime, then watch SLOs burn and alerts
 fire — without redeploying.
 
-SAFETY GUARD: the /admin/chaos endpoint is only mounted when CHAOS_ENABLED=true (the
-default in this lab). In any environment where you don't want it, set
-CHAOS_ENABLED=false and the endpoint returns 404.
+SAFETY GUARD: the /admin/chaos endpoint only answers when CHAOS_ENABLED=true, and it
+is OFF by default, so an image run anywhere else cannot be made to fail on request.
+The lab turns it on explicitly (k8s/edge-cache.yaml, docker-compose.yml); without
+that the endpoint returns 404.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from . import metrics
 
 
 def chaos_enabled() -> bool:
-    return os.getenv("CHAOS_ENABLED", "true").lower() in ("1", "true", "yes")
+    return os.getenv("CHAOS_ENABLED", "false").lower() in ("1", "true", "yes")
 
 
 @dataclass

@@ -55,6 +55,9 @@ spec:
               value: "0.1"
             - name: DEPLOYMENT_ENV
               value: "kind-lab"
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
           resources:
             requests:
               cpu: "100m"

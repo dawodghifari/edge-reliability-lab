@@ -1,0 +1,201 @@
+# Unit tests for k8s/slo-rules.yaml. Run: bash scripts/test-alerts.sh
+#
+# Each test feeds synthetic counters at a known rate and asserts which alerts
+# are firing at a given time. Request counters climb by 30 every 30s (1 req/s)
+# per series unless stated, so ratios are easy to read off the values.
+rule_files:
+  - ../../build/slo-rules.rules.yaml
+
+evaluation_interval: 30s
+
+tests:
+  # ---------------------------------------------------------------------------
+  # Healthy service: every request fast and non-5xx, cache warm, Redis up.
+  - name: healthy service pages nobody
+    interval: 30s
+    input_series:
+      - series: 'http_requests_total{job="edge-cache",route="/segment",status="200"}'
+        values: '0+3000x840'      # 100 req/s for 7h
+      - series: 'request_latency_seconds_bucket{job="edge-cache",route="/segment",le="0.2"}'
+        values: '0+3000x840'
+      - series: 'request_latency_seconds_count{job="edge-cache",route="/segment"}'
+        values: '0+3000x840'
+      - series: 'cache_hits_total{job="edge-cache"}'
+        values: '0+2850x840'      # 95% hit ratio
+      - series: 'cache_misses_total{job="edge-cache"}'
+        values: '0+150x840'
+      - series: 'redis_up{job="edge-cache"}'
+        values: '1x840'
+      - series: 'up{job="edge-cache"}'
+        values: '1x840'
+    alert_rule_test:
+      - {eval_time: 6h30m, alertname: EdgeCacheAvailabilityFastBurn, exp_alerts: []}
+      - {eval_time: 6h30m, alertname: EdgeCacheAvailabilitySlowBurn, exp_alerts: []}
+      - {eval_time: 6h30m, alertname: EdgeCacheLatencyFastBurn, exp_alerts: []}
+      - {eval_time: 6h30m, alertname: EdgeCacheLatencySlowBurn, exp_alerts: []}
+      - {eval_time: 6h30m, alertname: EdgeCacheHitRatioCollapsed, exp_alerts: []}
+      - {eval_time: 6h30m, alertname: EdgeCacheRedisDown, exp_alerts: []}
+      - {eval_time: 6h30m, alertname: EdgeCacheServiceDown, exp_alerts: []}
+
+  # ---------------------------------------------------------------------------
+  # 5% of requests fail for over an hour: 50x the 0.1% budget, so both windows
+  # of the fast burn agree and it pages.
+  - name: sustained 5% errors page as a fast availability burn
+    interval: 30s
+    input_series:
+      - series: 'http_requests_total{job="edge-cache",route="/segment",status="200"}'
+        values: '0+2850x180'      # 95 req/s good
+      - series: 'http_requests_total{job="edge-cache",route="/segment",status="500"}'
+        values: '0+150x180'       # 5 req/s 5xx
+    promql_expr_test:
+      - expr: sli:edge_cache_availability:bad_ratio_rate1h
+        eval_time: 75m
+        exp_samples:
+          - labels: 'sli:edge_cache_availability:bad_ratio_rate1h'
+            value: 0.05
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: EdgeCacheAvailabilityFastBurn
+        exp_alerts:
+          - exp_labels: {severity: critical, slo: availability, burn: fast}
+            exp_annotations:
+              summary: "Edge-cache availability error budget burning FAST (14.4x)"
+              description: "5xx ratio on /segment is >1.44% over both 1h and 5m — at this rate the 30-day 99.9% budget is exhausted in ~2 days. Page."
+              runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-availability-burn.md"
+
+  # ---------------------------------------------------------------------------
+  # A 15-minute burst of 10% errors, then healthy. Ten minutes after it ends the
+  # 1h window is still over 1.44% (15 x 10% / 60 = 2.5%), but the 5m window is
+  # clean, so the page has resolved. The short window is what stops a past
+  # incident from paging forever.
+  - name: the short window resolves a fast burn once errors stop
+    interval: 30s
+    input_series:
+      - series: 'http_requests_total{job="edge-cache",route="/segment",status="200"}'
+        values: '0+2700x29 81000+3000x60'            # 90 good/s for 15m, then 100/s
+      - series: 'http_requests_total{job="edge-cache",route="/segment",status="500"}'
+        values: '0+300x29 9000+0x60'                 # 10 bad/s for 15m, then none
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: EdgeCacheAvailabilityFastBurn
+        exp_alerts:
+          - exp_labels: {severity: critical, slo: availability, burn: fast}
+            exp_annotations:
+              summary: "Edge-cache availability error budget burning FAST (14.4x)"
+              description: "5xx ratio on /segment is >1.44% over both 1h and 5m — at this rate the 30-day 99.9% budget is exhausted in ~2 days. Page."
+              runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-availability-burn.md"
+      - eval_time: 25m
+        alertname: EdgeCacheAvailabilityFastBurn
+        exp_alerts: []
+
+  # ---------------------------------------------------------------------------
+  # 1% errors for 7 hours: 10x budget. Too slow for the 14.4x page, caught by
+  # the 6x slow burn.
+  - name: a steady 1% error rate is a slow burn, not a page
+    interval: 30s
+    input_series:
+      - series: 'http_requests_total{job="edge-cache",route="/segment",status="200"}'
+        values: '0+2970x840'      # 99 good/s
+      - series: 'http_requests_total{job="edge-cache",route="/segment",status="500"}'
+        values: '0+30x840'        # 1 bad/s
+    alert_rule_test:
+      - eval_time: 6h30m
+        alertname: EdgeCacheAvailabilityFastBurn
+        exp_alerts: []
+      - eval_time: 6h30m
+        alertname: EdgeCacheAvailabilitySlowBurn
+        exp_alerts:
+          - exp_labels: {severity: warning, slo: availability, burn: slow}
+            exp_annotations:
+              summary: "Edge-cache availability error budget burning slowly (6x)"
+              description: "5xx ratio on /segment is >0.6% over both 6h and 30m — sustained budget burn. Investigate."
+              runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-availability-burn.md"
+
+  # ---------------------------------------------------------------------------
+  # 20% of requests over 200ms for an hour: past the 14.4% fast-burn line for
+  # the 1% latency budget.
+  - name: a fifth of requests slower than 200ms pages as a fast latency burn
+    interval: 30s
+    input_series:
+      - series: 'request_latency_seconds_bucket{job="edge-cache",route="/segment",le="0.2"}'
+        values: '0+2400x180'      # 80 req/s under 200ms
+      - series: 'request_latency_seconds_count{job="edge-cache",route="/segment"}'
+        values: '0+3000x180'      # of 100 req/s
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: EdgeCacheLatencyFastBurn
+        exp_alerts:
+          - exp_labels: {severity: critical, slo: latency, burn: fast}
+            exp_annotations:
+              summary: "Edge-cache latency error budget burning FAST (14.4x)"
+              description: ">14.4% of /segment requests are slower than 200ms over both 1h and 5m. Page."
+              runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-latency-burn.md"
+
+  # ---------------------------------------------------------------------------
+  # The drill from the post-mortem: Redis goes away at 20m. Hits stop, every
+  # request becomes a miss (~128 req/s), redis_up drops to 0.
+  - name: redis outage fires RedisDown fast and HitRatioCollapsed within minutes
+    interval: 30s
+    input_series:
+      - series: 'cache_hits_total{job="edge-cache"}'
+        values: '0+2850x40 114000+0x40'             # 95/s, then nothing
+      - series: 'cache_misses_total{job="edge-cache"}'
+        values: '0+150x40 6000+3840x40'             # 5/s, then 128/s
+      - series: 'redis_up{job="edge-cache"}'
+        values: '1x40 0x40'
+    alert_rule_test:
+      # 30s after the fault: neither has held long enough.
+      - {eval_time: 20m30s, alertname: EdgeCacheRedisDown, exp_alerts: []}
+      - {eval_time: 20m30s, alertname: EdgeCacheHitRatioCollapsed, exp_alerts: []}
+      # ~1.5 min in: RedisDown (for: 1m) is firing; the hit-ratio alert is not yet.
+      - eval_time: 21m30s
+        alertname: EdgeCacheRedisDown
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "Edge-cache cannot reach Redis"
+              description: "redis_up is 0 — the cache layer is unreachable, so every request falls through to the origin."
+              runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-redis-down.md"
+      - {eval_time: 21m30s, alertname: EdgeCacheHitRatioCollapsed, exp_alerts: []}
+      # 4 min in: the 2m window has crossed 50% and the 2m hold has completed.
+      - eval_time: 24m
+        alertname: EdgeCacheHitRatioCollapsed
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Edge-cache hit ratio collapsed (<50%)"
+              description: "Cache hit ratio has dropped below 50% under traffic (2m window) — origin load and latency will spike. Likely a cold/flushed cache or Redis problem."
+              runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-hit-ratio-collapsed.md"
+
+  # ---------------------------------------------------------------------------
+  # Below 1 req/s the hit ratio means nothing (one cold request is 0%), so the
+  # alert must stay quiet on an idle cache.
+  - name: an idle cache does not page on a meaningless hit ratio
+    interval: 30s
+    input_series:
+      - series: 'cache_hits_total{job="edge-cache"}'
+        values: '0x40'
+      - series: 'cache_misses_total{job="edge-cache"}'
+        values: '0+15x40'         # 0.5 misses/s, no hits
+    alert_rule_test:
+      - {eval_time: 15m, alertname: EdgeCacheHitRatioCollapsed, exp_alerts: []}
+
+  # ---------------------------------------------------------------------------
+  # Both replicas down.
+  - name: no healthy targets fires ServiceDown
+    interval: 30s
+    input_series:
+      - series: 'up{job="edge-cache",instance="a"}'
+        values: '1x10 0x10'
+      - series: 'up{job="edge-cache",instance="b"}'
+        values: '1x10 0x10'
+    alert_rule_test:
+      - {eval_time: 5m30s, alertname: EdgeCacheServiceDown, exp_alerts: []}
+      - eval_time: 7m
+        alertname: EdgeCacheServiceDown
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "Edge-cache is DOWN (no healthy replicas)"
+              description: "No edge-cache Prometheus targets are up. The service is unreachable."
+              runbook_url: "https://github.com/dawodghifari/edge-reliability-lab/blob/main/docs/runbooks/edge-cache-service-down.md"
