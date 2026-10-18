@@ -1,4 +1,4 @@
-# Phase 3 — SLOs as code: recording rules for the SLIs plus multi-window
+# SLOs as code: recording rules for the SLIs plus multi-window
 # burn-rate alerts, a service-down alert, a cache-hit-ratio-collapse alert, and a
 # Redis-down alert. The Prometheus operator picks this up automatically
 # (monitoring-values.yaml relaxes the rule selector; the release label is belt-and-braces).

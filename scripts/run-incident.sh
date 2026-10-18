@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 4 — induce a CONTROLLED incident: a Redis (cache-layer) outage under load.
+# Induce a CONTROLLED incident: a Redis (cache-layer) outage under load.
 #
 # What happens: with load running, we scale Redis to 0. In strict cache mode every
 # request now misses and falls through to the (slow) origin — hit ratio collapses,

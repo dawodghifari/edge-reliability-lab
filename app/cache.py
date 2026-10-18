@@ -13,7 +13,7 @@ Two operating modes, chosen by CACHE_MEMORY_FALLBACK (default "false"):
   is genuinely down, reads are treated as cache-unavailable → forced origin fetch,
   and we surface that on the `redis_up` gauge + `redis_errors_total` counter. This
   is what makes a Redis outage *visible* (latency up, hit ratio collapses) — exactly
-  the incident signal Phase 4 relies on. We never silently mask an outage with a
+  the signal the incident drill relies on. We never silently mask an outage with a
   local dict here.
 
 - **Fallback (tests / local without a Redis server).** If a real Redis can't be
@@ -68,7 +68,7 @@ def _cb_enabled() -> bool:
 class _CircuitBreaker:
     """Trip-and-cooldown breaker in front of the Redis dependency.
 
-    The Phase-4 stall was this: `/segment` is a *sync* endpoint, so every request
+    The stall the Redis outage drill found was this: `/segment` is a *sync* endpoint, so every request
     runs on a worker thread. During a Redis outage each request blocked on a dead
     Redis connection, worker threads piled up faster than they drained, throughput
     collapsed, and the hit/miss counters barely advanced — so the 5-minute
@@ -382,7 +382,7 @@ class Cache:
         Intentionally does NOT ping Redis. Liveness/readiness must reflect the app's
         OWN health, not a shared downstream dependency — otherwise a Redis outage
         marks every replica unhealthy and turns graceful degradation into a hard,
-        correlated outage (learned the hard way: see the Phase 4 post-mortem). Redis
+        correlated outage (learned the hard way: see docs/postmortems/). Redis
         health here is the last value observed by real request traffic, which keeps
         redis_up accurate without ever blocking the probe path.
         """

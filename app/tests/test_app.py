@@ -1,4 +1,4 @@
-"""Phase 0 tests for the edge-cache service.
+"""Tests for the edge-cache service: cache hit/miss, health, metrics and chaos.
 
 Run from the repo root:  pytest -q
 
