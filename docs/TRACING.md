@@ -43,6 +43,18 @@ to near-zero and carries `redis.skipped=true`, and every request goes straight t
 `origin.fetch`. The service is degraded but not stalled — and you can see it rather
 than infer it from a gauge.
 
+To pull out exactly those requests, query Tempo with TraceQL (Grafana → Explore →
+Tempo → TraceQL):
+
+```
+{ span.redis.skipped = true }
+```
+
+`app/cache.py` sets `redis.skipped` on every `cache.lookup` span, and it is true only
+while the breaker is open, so this returns the requests that skipped Redis and nothing
+else. Run during the outage drill, it isolates the outage traces from the healthy ones
+on either side of it.
+
 ## Architecture
 
 ```
@@ -141,6 +153,7 @@ Tempo release and both Grafana datasources.
 ```bash
 kubectl -n monitoring port-forward svc/kube-prom-stack-grafana 3000:80
 # Grafana → Explore → Tempo → Search → service.name = edge-cache
+# Only the requests that hit an open breaker:  { span.redis.skipped = true }
 ```
 
 ## Limitations, stated plainly
