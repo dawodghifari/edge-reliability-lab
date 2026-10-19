@@ -6,7 +6,7 @@
 # hit http://localhost:30080 directly with no port-forward.
 #
 # NOTE: its metadata label is `app: edge-cache-lb` (not `edge-cache`) on purpose, so
-# the Phase 2 ServiceMonitor (which selects `app: edge-cache`) does NOT also scrape
+# the ServiceMonitor (which selects `app: edge-cache`) does NOT also scrape
 # this service and double-count metrics. The pod SELECTOR is still `app: edge-cache`.
 apiVersion: v1
 kind: Service

@@ -1,5 +1,5 @@
-# Local dev stack: the edge-cache service + Redis. This is the Phase 0 target —
-# run it before moving to Kubernetes.
+# Local dev stack: the edge-cache service + Redis. Run it before moving to
+# Kubernetes.
 #
 #   docker compose up --build
 #   curl localhost:8000/segment/abc   # first time: X-Cache: MISS

@@ -33,7 +33,7 @@ spec:
             - name: CHAOS_ENABLED
               value: "true"
             # Strict cache mode: depend on the real in-cluster Redis. No silent
-            # in-memory fallback, so a Redis outage is visible (Phase 4).
+            # in-memory fallback, so a Redis outage is visible to the incident drill.
             - name: CACHE_MEMORY_FALLBACK
               value: "false"
             - name: ORIGIN_LATENCY_SECONDS
@@ -93,7 +93,7 @@ spec:
   selector:
     app: edge-cache
   ports:
-    - name: http          # named port — the Phase 2 ServiceMonitor scrapes "http"
+    - name: http          # named port: the ServiceMonitor scrapes "http"
       port: 8000
       targetPort: http
   type: ClusterIP

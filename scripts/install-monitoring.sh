@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 2: install the monitoring stack and wire up scraping + the dashboard.
+# Install the monitoring stack and wire up scraping + the dashboard.
 #
 #   bash scripts/install-monitoring.sh
 #

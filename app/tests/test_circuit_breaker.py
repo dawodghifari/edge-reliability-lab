@@ -1,9 +1,9 @@
-"""Phase 4 tests — the Redis circuit breaker.
+"""Tests for the Redis circuit breaker.
 
 These target the *strict-mode* Redis path (the path a deployed replica takes),
-which the Phase-0 suite doesn't cover because it runs in memory-fallback mode.
+which test_app.py doesn't cover because it runs in memory-fallback mode.
 
-The point of the breaker is to stop the Phase-4 stall: during a Redis outage a
+The point of the breaker is to stop the stall found in the Redis outage drill: during a Redis outage a
 sync `/segment` worker must NOT keep blocking on a dead Redis. Once the breaker
 opens, reads/writes skip Redis entirely and fail fast to origin — so we assert
 (a) it opens after N failures, (b) it then stops calling Redis, (c) the outage
