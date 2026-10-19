@@ -15,8 +15,19 @@ on a dead Redis instead of failing fast, an operational alert that was too slow 
 on a short outage, and a set of metric exemplars that linked to traces which had never
 been exported. All three are diagnosed, fixed, and written up here.
 
+## Results at a glance
+
+| | |
+|---|---|
+| **Redis outage drill** (9 minutes, under load) | **0 errors**; ~128 req/s held; ~69,000 requests served from origin |
+| **Detection** | `RedisDown` fired at ~1 minute, `HitRatioCollapsed` at ~4 minutes |
+| **Latency during the outage** | p99 ~199 ms, inside the 99%-under-200 ms SLO |
+| **Verification run** (tracing on) | 896,585 requests in 17 minutes at ~879 req/s, 0 failures, 92% hit ratio, p95 154 ms (client-bound: shows stability, not capacity) |
+| **Capacity model** | ~3,000 req/s normal, ~530 req/s degraded, across two replicas |
+
 ## Contents
 
+- [Results at a glance](#results-at-a-glance)
 - [What it does](#what-it-does)
 - [Architecture](#architecture)
 - [How a request flows](#how-a-request-flows)
