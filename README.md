@@ -378,8 +378,22 @@ teardown/rebuild flow are in [terraform/README.md](terraform/README.md).
 uses the in-memory cache backend and a fake Redis, so it needs no running services and is
 order-independent.
 
-GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every push
-and pull request: lint with ruff, run the tests with pytest, and build the Docker image.
+The alerts are tested too. `k8s/tests/slo-rules.test.yaml` feeds `promtool` synthetic
+series and asserts which alerts fire, and when: a healthy service pages nobody; sustained
+5% errors page as a fast burn; the fast burn resolves once errors stop, even though the 1h
+window is still hot; a steady 1% is a slow burn and not a page; 20% slow requests page on
+latency; the Redis drill fires `RedisDown` at ~1 minute and `HitRatioCollapsed` by 4
+minutes; an idle cache stays quiet; no healthy targets fires `ServiceDown`. Restoring the
+original 5-minute hit-ratio window, the bug from the post-mortem, fails the suite. Run it
+with `bash scripts/test-alerts.sh` (needs Docker and PyYAML).
+
+`bash scripts/validate-infra.sh` checks every manifest Terraform applies with `kubeconform`
+in strict mode (the Prometheus-operator CRDs included), then runs `terraform validate` and
+`terraform fmt -check`.
+
+GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs all of it on
+every push and pull request: ruff and pytest, the alert tests, manifest and Terraform
+validation, and a build of the Docker image, which runs as an unprivileged user.
 
 ## Design decisions worth calling out
 
@@ -406,6 +420,7 @@ and pull request: lint with ruff, run the tests with pytest, and build the Docke
 | `docs/postmortems/` | The incident post-mortem, timeline, and screenshots |
 | `docs/capacity/` | Capacity model, forecast script, and chart |
 | `docs/CASE_STUDY.md` | Narrative write-up of the whole project |
+| `k8s/tests/` | promtool unit tests for the SLO and operational alerts |
 | `load/` | k6 load test |
 | `terraform/` | Terraform for the in-cluster stack |
 | `scripts/` | setup / build-load / deploy / incident / teardown helpers |

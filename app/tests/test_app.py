@@ -95,3 +95,16 @@ def test_flush_cache_forces_cold():
 
     client.post("/admin/chaos", json={"flush_cache": True})
     assert client.get("/segment/cold").headers["X-Cache"] == "MISS"
+
+
+def test_chaos_is_off_unless_enabled(monkeypatch):
+    """The fault lever must be opt-in: unset or false means the endpoint is gone."""
+    monkeypatch.delenv("CHAOS_ENABLED", raising=False)
+    assert client.get("/admin/chaos").status_code == 404
+    assert client.post("/admin/chaos", json={"error_rate": 1.0}).status_code == 404
+
+    monkeypatch.setenv("CHAOS_ENABLED", "false")
+    assert client.get("/admin/chaos").status_code == 404
+
+    monkeypatch.setenv("CHAOS_ENABLED", "true")
+    assert client.get("/admin/chaos").status_code == 200

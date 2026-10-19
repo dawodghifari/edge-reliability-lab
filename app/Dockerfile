@@ -16,6 +16,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # is mounted at /srv/app to keep the `app.main` import path working.
 COPY . /srv/app
 
+# Unprivileged. The service writes nothing to disk, so it needs no root. A numeric
+# UID lets Kubernetes verify runAsNonRoot without resolving a user name.
+RUN useradd --create-home --uid 10001 edge
+USER 10001
+
 EXPOSE 8000
 
 # Liveness check baked into the image.
